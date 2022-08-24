@@ -134,9 +134,13 @@ int main()
 
 
 
+GPU存在自干扰问题，使得给不同SM分配不同任务的好处被抵消。因此应该将GPU视为单块计算资源，职能执行thread级别的并行，不能执行task级别的并行。
+
+
+
 ##### CUDA context上下文
 
-- 类似于CPU进程的上下文。多线程分配调用的GPU资源同属于一个context下，通常与CPU的一个进程相对应。每个context有自己的地址空间，不同context之间的地址空间是隔离的。在同一个GPU上，可能同时存在多个GPUcontext，多个context只能顺序执行，无法并发。
+- 类似于CPU进程的上下文。多线程分配调用的GPU资源同属于一个context下，通常与CPU的一个进程相对应。每个context有自己的地址空间，不同context之间的地址空间是隔离的。在同一个GPU上，可能同时存在多个GPUcontext，多个context只能顺序执行，无法并发。context内的线程可以并行和抢占，但是线程优先级只有两种。
 - CUDA runtime将context和device的概念合并，即在一个GPU上操作可以看成在一个context下；在驱动这一层的Driver API里，创建context是针对一个线程的，即一个device针对多个context，每个context对应多个线程，线程之间的context可以转移（？）。在driver API中，每一个CPU线程必须要创建context，或者从其他CPU线程转移context。
   - 注：CUDA runtime是对Driver API的上层封装，以cuda开头；Driver API功能强大，但使用繁琐，以cu开头。
 
@@ -145,6 +149,32 @@ int main()
 ##### MPS（Multi Process Service）
 
 - MPS允许多个CPU进程共享同一个GPU context，不同进程的kernel和memcpy操作在同一个GPU上并发执行，以实现最大化GPU 利用率，减少GPU上下文的切换事件与存储空间。
+
+
+
+##### CBS（Constant Bandwidth Server）
+
+- 如果一个**task**的执行时间超过了WCET，则将他挂起，并且将其相对截止日期成比例的延长。此算法用来防止非正常行为的任务干扰导致正在等待执行的任务被延迟调度。
+
+
+
+##### EGLStreams
+
+- 用于在cuda context间进行共享数据的API。EGLStreams在用户空间层操作，标定进程为数据生产者和消费者，并且可以转换身份。在driver层，EGLStream的共享数据实体被转换为在命令缓冲区中释放、获取同步点，以完成数据共享。
+
+
+
+##### GPU channel
+
+![GPU channel](D:\lotus-intern\lotus\调研\GPU channel.png)
+
+- 是GPU与CPU之间的桥接接口，通过CPU向GPU发送GPU指令的唯一通道，GPU channel包含了两类用于存储GPU指令的buffer：
+  - GPU command buffer (也称之为FIFO push buffer)
+  - Ring buffer (也称之为indirect buffer)，从上图中看出，这个buffer是环形结构的，即其容量是固定的，这也是为什么叫Ring buffer的原因吧
+
+- 当GPU指令被写入到GPU command buffer时，系统还会向Ring buffer中写入与此指令所对应的packet，packet包含了此指令在GPU command buffer中的偏移位置与长度数据。
+
+- 在执行指令的时候，GPU不是直接从GPU command buffer中读取数据，而是先经过Ring buffer读取出当前待处理指令的相关信息，再据此读取GPU command（这也是为什么Ring buffer被称之为indirect buffer的原因）。
 
 ----
 
